@@ -1,0 +1,240 @@
+---
+title: "immunization-model"
+author: "Kamarioti, Lyrio Brandes, Soman, Youngapelian"
+date: "4/28/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+# load libraries 
+```{r setup, include=FALSE}
+library(lme4)
+library(readr)
+library(haven)
+library(ggplot2)
+library(psych)
+library(data.table)
+library(foreign)
+```
+
+# load data
+```{r include = FALSE}
+immune <- read_delim(file = "/Users/mykajaapyoungapelian/builds/mixedEffects/modeling/datasets/immun2.csv")
+```
+
+# factor categorical variables
+```{r}
+immune$immun <- as.factor(immune$immun) # 0 = not immune; 1 = immune
+immune$order <- as.factor(immune$order)
+immune$ethn <- as.factor(immune$ethn)
+immune$momEd <- as.factor(immune$momEd)
+immune$mom25p <- as.factor(immune$mom25p)
+immune$kid2p <- as.factor(immune$kid2p)
+immune$momWork <- as.factor(immune$momWork)
+immune$rural <- as.factor(immune$rural) # rural = 1, urban = 0
+```
+
+# desc stats
+```{r}
+summary(immune)
+
+
+```
+
+# explore immune data
+```{r}
+prop_var <- c(1:length(immune$immun))
+
+gg_mom_boxplot <- ggplot(data = immune, aes(y = pcInd81, x = mom)) + geom_boxplot(aes(fill=immun))
+gg_mom_boxplot
+
+
+gg_kid_boxplot <- ggplot(data = immune, aes(y = pcInd81, x = kid)) + geom_boxplot(aes(fill=immun))
+gg_kid_boxplot
+
+gg_rural_boxplot <- ggplot(data = immune, aes(y = pcInd81, x = rural)) + geom_boxplot(aes(fill=immun))
+gg_rural_boxplot
+
+gg_order_boxplot <- ggplot(data = immune, aes(y = pcInd81, x = order)) + geom_boxplot(aes(fill=immun))
+gg_order_boxplot
+
+gg_ethn_boxplot <- ggplot(data = immune, aes(y = pcInd81, x = ethn)) + geom_boxplot(aes(fill=immun))
+gg_ethn_boxplot
+
+
+# plot rural and immune with pseudo y scale
+gg_rural_prop_var <- ggplot(data = immune, aes(y = prop_var, x = rural)) + geom_boxplot(aes(fill=immun)) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.y = element_blank()) + xlab("Rural")
+
+gg_rural_prop_var
+
+
+# plot momWork and immune with pseudo y scale
+gg_momWork_prop_var <- ggplot(data = immune, aes(y = prop_var, x = momWork)) + geom_boxplot(aes(fill=immun)) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.y = element_blank()) + xlab("Mom Never Worked Outside Home = 0, Mom Worked Outside Home = 1 ")
+
+gg_momWork_prop_var
+
+
+
+
+
+gg_rural_id <- ggplot(data = immune, aes(x = immune, y = prop_var)) + geom_bar(stat = "identity")
+
+
+
+# point plot
+rural_point <- ggplot(data = immune, aes(x = rural, y = pcInd81, group = mom)) + geom_point()
+rural_point
+
+```
+
+# base R plot from maria 
+```{r}
+counts <- table(immune$immun, immune$rural, row.names = c("Not Immune", "Immune"), colnames("Urban", "Rural"))
+
+barplot(counts, main="Immunized status by community’s location (rural vs urban)",
+        xlab="", col=c("darkblue","red"),
+        legend = rownames(counts), beside=TRUE, )
+```
+
+# check fixed effects and interactions
+```{r}
+immune_glm_full <- glm(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81, family = binomial, data = immune)
+AIC(immune_glm_full) # 2832.768
+
+immune_glm_int <- glm(immun ~ kid2p + order + momEd*momWork + mom25p + ethn*rural + pcInd81, family = binomial, data = immune)
+summary(immune_glm_int)
+# ethnicity and rural do not interact nor do momWork and momEd
+```
+
+# model building of random effects 
+
+```{r}
+
+# step 1: fit full fixed effects model
+# full glm with no random effects
+immune_glm_full <- glm(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81, family = binomial, data = immune)
+AIC(immune_glm_full) # 2832.768
+
+# step 2: start with level three and compare random effects on cluster and rural. Compare AIC to determine which random effect is most appropriate. We expected immunity to differ between communties and between rural areas. 
+# full model with cluster RI 
+cluster_RI_full <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (1|cluster), family = binomial, data = immune)
+AIC(cluster_RI_full) # # 2779.714
+
+# full model with rural RI 
+rural_RI_full <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (1|rural), family = binomial, data = immune)
+AIC(rural_RI_full) # 2834.768
+
+# step 3: add RS to rural to check variation within rural communities.
+cluster_RI_rural_RIS_full <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (rural|cluster),family = binomial, data = immune)
+AIC(cluster_RI_rural_RIS_full) # 2783.062
+#did not improve model so we will not use RS for rural. At level 3 we will only use RI for cluster(communities). 
+
+clusterRI_momRI_full <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(cluster_RI_full) # # 2779.714
+AIC(clusterRI_momRI_full) # 2748.598
+# having a RI for mom is also better 
+
+# step 4: Now we need to evaluate random level 2 random effects. 
+# compare level 2 RI for mom and RI for cluster. Try RIS momEd for mom. 
+momEdRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (momEd|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(momEdRISclusterRI_momRI) # 2750.192
+# not having RIS for mom's education is better. Keep model with only RI on mom and RI for cluster. 
+
+# compare RIS on ethnicities from communities
+ethnRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (ethn|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(ethnRISclusterRI_momRI) # 2751.451
+# RIS ethnicity per community does not improve the model 
+
+# compare RIS on momWork from communities
+momWorkRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (momWork|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(momWorkRISclusterRI_momRI) # 2752.21
+# adding RIS momWork does not improve the model 
+
+# compare RIS on mom25p from communities
+mom25pRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (mom25p|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(mom25pRISclusterRI_momRI) # 2752.21
+# adding RIS mom25p does not improve the model
+
+
+
+# step 5: compare random effects of level one variables 
+# immunization of kids might vary within kids between clusters because kids get different vaccinations at different ages. 
+# compare RIS on mom25p from communities
+kid2pRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (kid2p|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(kid2pRISclusterRI_momRI) # 2749.135
+# we tested this and it was a slightly worse fit so we excluded to RIS for kid2p from the model. Interestingly: after looking at the logLik, the model kid2p RIS was better, but we have have been using AIC this whole time, so we will stick with AIC.  
+
+# compare order RIS on communities
+orderRISclusterRI_momRI <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (order|cluster) + (1|mom), family = binomial, data = immune)
+AIC(clusterRI_momRI_full) # 2748.598
+AIC(orderRISclusterRI_momRI) # 2764.178
+# model without order RIS is a better fit based on AIC. 
+
+```
+
+# model build with fixed 
+```{r}
+# full model with 
+lmer_0 <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p + ethn  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+summary(lmer_0)
+AIC(lmer_0) # 2748.598
+
+# model without ethnicity
+lmer_1 <- glmer(immun ~ kid2p + order + momEd + momWork + mom25p  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_1) # 2745.017
+summary(lmer_1)
+# model without ethnicity had a lower AIC
+
+
+# model without order
+lmer_2 <- glmer(immun ~ kid2p + momEd + momWork + mom25p  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_2) # 2742.77
+summary(lmer_2)
+# model without order had a lower AIC
+
+# model without mom25p
+lmer_3 <- glmer(immun ~ kid2p + momEd + momWork  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_3) # 2740.802
+summary(lmer_3) 
+# model without mom25p had a lower AIC
+
+# model without momEd 
+lmer_4 <- glmer(immun ~ kid2p + momWork  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_4) # 2743.093
+summary(lmer_4) 
+# model without momEd had a higher AIC. Keep momEd in model 
+
+# check model with interactons 
+lmer_5 <- glmer(immun ~ kid2p*momWork*rural*pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_5) # 
+summary(lmer_5) 
+```
+
+# final model 
+```{r}
+lmer_3 <- glmer(immun ~ kid2p + momEd + momWork  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_3) # 2740.802
+summary(lmer_3) 
+```
+# final model 
+
+```{r}
+lmer_3 <- glmer(immun ~ kid2p + momEd + momWork  + rural  + pcInd81 + (1|cluster) + (1|mom), family = binomial, data = immune)
+AIC(lmer_3) # 2740.802
+summary(lmer_3) 
+```
+
+# level 1: kid, kid2p, order, immun
+# level 2: mom, momEd, momWork, mom25p, ethn
+# level 3: cluster (w/ RI), rural, pcInd81
+
+rural|urban 
+rm(list = ls(all = T))
+
